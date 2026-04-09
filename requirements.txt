@@ -1,0 +1,13 @@
+pandas
+numpy
+scikit-learn
+matplotlib
+joblib
+requests
+feedparser
+tqdm
+lightgbm
+transformers
+torch
+pytrends
+statsmodels
