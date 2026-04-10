@@ -3,13 +3,12 @@ step1_data.py - Data Loading & Cleaning
 ========================================
 Loads two raw data sources:
   1. Bitcoin Historical Data (5 years of OHLCV from Investing.com)
-  2. News articles (pre-scraped CSV or live RSS/API scraping)
+  2. News articles (pre-scraped CSV or live RSS scraping)
 
 Outputs clean DataFrames ready for feature engineering in Step 2.
 """
 
 import logging
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -18,7 +17,7 @@ import pandas as pd
 import requests
 
 from config import (
-    OHLCV_PATH, PRESCRAPED_NEWS, LEGACY_PRESCRAPED_NEWS, CRYPTOPANIC_TOKEN, NEWSDATA_KEY,
+    OHLCV_PATH, PRESCRAPED_NEWS, LEGACY_PRESCRAPED_NEWS,
     DAYS_BACK, RSS_FEEDS, BTC_KEYWORDS,
     TRENDS_KEYWORDS, TRENDS_GEO, TRENDS_DAYS_BACK,
     FGI_LIMIT,
@@ -171,122 +170,13 @@ def scrape_rss(cutoff_date: datetime) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# 1D. CryptoPanic API (optional)
-# ---------------------------------------------------------------------------
-def scrape_cryptopanic(token: str, days_back: int) -> pd.DataFrame:
-    """Free tier: 50 req/day, 20 articles per page."""
-    if not token:
-        return pd.DataFrame()
-
-    log.info("  CryptoPanic API...")
-    records = []
-    cutoff = datetime.now() - timedelta(days=days_back)
-    url = "https://cryptopanic.com/api/v1/posts/"
-    page = 1
-
-    while True:
-        params = {
-            "auth_token": token, "currencies": "BTC",
-            "filter": "news", "public": "true", "page": page,
-        }
-        try:
-            data = requests.get(url, params=params, timeout=10).json()
-        except Exception as e:
-            log.warning(f"  CryptoPanic page {page} failed: {e}")
-            break
-
-        results = data.get("results", [])
-        if not results:
-            break
-
-        for item in results:
-            try:
-                pub = datetime.fromisoformat(
-                    item.get("published_at", "").replace("Z", "+00:00")
-                ).replace(tzinfo=None)
-            except Exception:
-                continue
-            if pub < cutoff:
-                return pd.DataFrame(records)
-
-            title = item.get("title", "")
-            records.append({
-                "date": pub.date(), "source": "cryptopanic",
-                "title": title, "summary": "", "text": title,
-            })
-
-        page += 1
-        time.sleep(1.2)
-
-    return pd.DataFrame(records)
-
-
-# ---------------------------------------------------------------------------
-# 1E. NewsData.io API (optional)
-# ---------------------------------------------------------------------------
-def scrape_newsdata(api_key: str, days_back: int) -> pd.DataFrame:
-    """Free tier: 200 credits/day. Good for historical coverage."""
-    if not api_key:
-        return pd.DataFrame()
-
-    log.info("  NewsData.io API...")
-    records = []
-    cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-    url = "https://newsdata.io/api/1/news"
-    page = None
-
-    while True:
-        params = {
-            "apikey": api_key, "q": "bitcoin OR BTC",
-            "language": "en", "from_date": cutoff,
-            "category": "business,technology",
-        }
-        if page:
-            params["page"] = page
-        try:
-            data = requests.get(url, params=params, timeout=15).json()
-        except Exception as e:
-            log.warning(f"  NewsData.io failed: {e}")
-            break
-
-        if data.get("status") != "success":
-            log.warning(f"  NewsData.io error: {data.get('message', 'unknown')}")
-            break
-
-        for article in data.get("results", []):
-            pub = article.get("pubDate", "")
-            try:
-                published = datetime.strptime(pub[:10], "%Y-%m-%d")
-            except Exception:
-                continue
-            title = article.get("title", "") or ""
-            desc  = article.get("description", "") or ""
-            text  = f"{title}. {desc}"[:512]
-
-            if is_btc_relevant(text):
-                records.append({
-                    "date": published.date(), "source": "newsdata",
-                    "title": title, "summary": desc[:500], "text": text,
-                })
-
-        page = data.get("nextPage")
-        if not page:
-            break
-        time.sleep(0.5)
-
-    return pd.DataFrame(records)
-
-
-# ---------------------------------------------------------------------------
-# 1F. Collect all news sources
+# 1D. Collect all news sources
 # ---------------------------------------------------------------------------
 def collect_all_news() -> pd.DataFrame:
     """
     Gather news from all available sources:
       1. Pre-scraped CSV (fastest, no network needed)
       2. RSS feeds (free, no API key)
-      3. CryptoPanic API (optional)
-      4. NewsData.io API (optional)
 
     Deduplicates by title and returns a combined DataFrame.
     """
@@ -295,8 +185,6 @@ def collect_all_news() -> pd.DataFrame:
     frames = [
         load_prescraped_news(),
         scrape_rss(cutoff),
-        scrape_cryptopanic(CRYPTOPANIC_TOKEN, DAYS_BACK),
-        scrape_newsdata(NEWSDATA_KEY, DAYS_BACK),
     ]
     frames = [f for f in frames if not f.empty]
 
